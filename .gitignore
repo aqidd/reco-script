@@ -1,3 +1,7 @@
 .claude
 reconciliation_*
 *.out
+
+# compiled binaries
+/reco
+/reco-script
