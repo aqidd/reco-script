@@ -35,7 +35,7 @@ func inRange(t, start, end time.Time) bool {
 }
 
 // Reconcile compares system transactions against bank rows within [start, end].
-func Reconcile(sys []Transaction, bank []BankRow, start, end time.Time, greedy bool) Summary {
+func Reconcile(sys []Transaction, bank []BankRow, start, end time.Time, greedy bool, maxDiff int) Summary {
 	// Filter both sides to the reconciliation window.
 	var filteredSys []Transaction
 	for _, s := range sys {
@@ -154,7 +154,12 @@ func Reconcile(sys []Transaction, bank []BankRow, start, end time.Time, greedy b
 				sum.UnmatchedSystem = append(sum.UnmatchedSystem, sysRow)
 				continue // no unused bank rows available
 			}
-
+			// Check if the difference is within the maxDiff threshold
+			if math.Abs(bankDay.rows[closestIndex].Amount-sysRow.Signed()) > float64(maxDiff) {
+				sum.UnmatchedSystem = append(sum.UnmatchedSystem, sysRow)
+				continue // difference exceeds maxDiff
+			}
+			
 			sum.RecommendedPairs = append(sum.RecommendedPairs, Pair{
 				Sys:  sysRow,
 				Bank: bankDay.rows[closestIndex],
