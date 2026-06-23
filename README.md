@@ -58,6 +58,10 @@ Sample files live in `testdata/`.
 
 ## How it works
 
+![Reconciliation pipeline and matching diagram](docs/how-it-works.png)
+
+*An interactive version with code pointers is in [`docs/how-it-works.html`](docs/how-it-works.html).*
+
 Both sides are first filtered to the `[start, end]` window (calendar day,
 inclusive). System amounts are signed via the `type` column so they compare
 directly against the already-signed bank amounts. Both phases run off one

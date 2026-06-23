@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>reco-script — How Reconciliation Works</title>
+<style>
+  body{margin:0;background:#f7f8fa;color:#1f2933;
+       font:16px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;}
+  .wrap{max-width:980px;margin:0 auto;padding:32px 20px 70px;}
+  h1{font-size:26px;margin:0 0 4px;}
+  p.lead{color:#475569;margin:0 0 20px;font-size:17px;}
+  .card{background:#fff;border:1px solid #e5e7eb;border-radius:14px;
+        padding:10px 14px;margin:0 0 22px;box-shadow:0 1px 2px rgba(0,0,0,.04);}
+  h2{font-size:18px;margin:18px 6px 8px;}
+  svg{display:block;width:100%;height:auto;}
+  .note{font-size:13px;color:#6b7280;margin:6px 8px 0;}
+  code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;
+       background:#0f172a;color:#7dd3fc;padding:1px 6px;border-radius:4px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Transaction Reconciliation — How It Works</h1>
+  <p class="lead">Matching what our system recorded against what the banks reported — visually.</p>
+
+  <h2>The pipeline</h2>
+  <div class="card">
+  <svg viewBox="0 0 960 150" role="img" aria-label="Five-stage pipeline">
+    <defs>
+      <marker id="ar" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L6,3 L0,6 Z" fill="#94a3b8"/>
+      </marker>
+    </defs>
+    <!-- stages -->
+    <g font-size="13" text-anchor="middle">
+      <!-- 1 -->
+      <rect x="14"  y="34" width="160" height="58" rx="10" fill="#f1f5f9" stroke="#475569"/>
+      <text x="94"  y="58" font-weight="700">1 · Load &amp; filter</text>
+      <text x="94"  y="78" fill="#475569">rows in date range</text>
+      <!-- 2 -->
+      <rect x="200" y="34" width="160" height="58" rx="10" fill="#eff4ff" stroke="#2563eb"/>
+      <text x="280" y="58" font-weight="700">2 · Index by day</text>
+      <text x="280" y="78" fill="#475569">sort by amount</text>
+      <!-- 3 -->
+      <rect x="386" y="34" width="160" height="58" rx="10" fill="#ecfdf3" stroke="#15803d"/>
+      <text x="466" y="58" font-weight="700">3 · Exact match</text>
+      <text x="466" y="78" fill="#15803d">✓ settled</text>
+      <!-- 4 -->
+      <rect x="572" y="34" width="170" height="58" rx="10" fill="#fff7ed" stroke="#b45309"/>
+      <text x="657" y="55" font-weight="700">4 · Closest match</text>
+      <text x="657" y="75" fill="#b45309">⚠ optional -greedy</text>
+      <!-- 5 -->
+      <rect x="768" y="34" width="178" height="58" rx="10" fill="#fef2f2" stroke="#b91c1c"/>
+      <text x="857" y="58" font-weight="700">5 · Report leftovers</text>
+      <text x="857" y="78" fill="#b91c1c">✗ unmatched</text>
+      <!-- arrows -->
+      <g stroke="#94a3b8" stroke-width="2" marker-end="url(#ar)">
+        <line x1="176" y1="63" x2="198" y2="63"/>
+        <line x1="362" y1="63" x2="384" y2="63"/>
+        <line x1="548" y1="63" x2="570" y2="63"/>
+        <line x1="744" y1="63" x2="766" y2="63"/>
+      </g>
+      <!-- code refs -->
+      <g font-family="ui-monospace,Menlo,monospace" font-size="10.5" fill="#0f172a" text-anchor="middle">
+        <text x="94"  y="112">reconcile.go:40–49</text>
+        <text x="280" y="112">reconcile.go:62–75</text>
+        <text x="466" y="112">reconcile.go:78–105</text>
+        <text x="657" y="112">reconcile.go:108–169</text>
+        <text x="857" y="112">reconcile.go:171</text>
+      </g>
+    </g>
+  </svg>
+  </div>
+
+  <h2>What matching looks like</h2>
+  <div class="card">
+  <svg viewBox="0 0 960 470" role="img" aria-label="System rows matched to bank rows">
+    <defs>
+      <marker id="x" markerWidth="10" markerHeight="10" refX="5" refY="5">
+        <path d="M2,2 L8,8 M8,2 L2,8" stroke="#b91c1c" stroke-width="1.6"/>
+      </marker>
+    </defs>
+    <!-- column headers -->
+    <text x="170" y="34" font-size="15" font-weight="700" text-anchor="middle">SYSTEM ledger</text>
+    <text x="790" y="34" font-size="15" font-weight="700" text-anchor="middle">BANK statements</text>
+    <text x="480" y="34" font-size="12" fill="#6b7280" text-anchor="middle">same day · matched by amount</text>
+
+    <!-- connectors (drawn first, behind cards) -->
+    <!-- exact -->
+    <path d="M330,90 C460,90 500,90 630,90" fill="none" stroke="#15803d" stroke-width="3"/>
+    <text x="480" y="80" font-size="12" fill="#15803d" text-anchor="middle" font-weight="700">exact ✓</text>
+    <!-- nearest -->
+    <path d="M330,170 C460,170 500,170 630,170" fill="none" stroke="#b45309" stroke-width="3" stroke-dasharray="6 4"/>
+    <text x="480" y="160" font-size="12" fill="#b45309" text-anchor="middle" font-weight="700">≈ off by 2,500 ⚠</text>
+    <!-- unmatched system -->
+    <line x1="330" y1="250" x2="455" y2="250" stroke="#b91c1c" stroke-width="2.5" marker-end="url(#x)"/>
+    <text x="400" y="240" font-size="11.5" fill="#b91c1c" text-anchor="middle">no bank row</text>
+    <!-- unmatched bank -->
+    <line x1="630" y1="330" x2="505" y2="330" stroke="#b91c1c" stroke-width="2.5" marker-end="url(#x)"/>
+    <text x="565" y="320" font-size="11.5" fill="#b91c1c" text-anchor="middle">no system row</text>
+
+    <!-- SYSTEM cards -->
+    <g font-size="14" text-anchor="middle">
+      <g>
+        <rect x="40" y="66" width="290" height="48" rx="9" fill="#ecfdf3" stroke="#15803d"/>
+        <text x="185" y="86" font-weight="700">S1 · CREDIT</text>
+        <text x="185" y="104">Rp 150,000</text>
+      </g>
+      <g>
+        <rect x="40" y="146" width="290" height="48" rx="9" fill="#fff7ed" stroke="#b45309"/>
+        <text x="185" y="166" font-weight="700">S3 · CREDIT</text>
+        <text x="185" y="184">Rp 2,000,000</text>
+      </g>
+      <g>
+        <rect x="40" y="226" width="290" height="48" rx="9" fill="#fef2f2" stroke="#b91c1c"/>
+        <text x="185" y="246" font-weight="700">S4 · DEBIT</text>
+        <text x="185" y="264">Rp 75,000</text>
+      </g>
+    </g>
+
+    <!-- BANK cards -->
+    <g font-size="14" text-anchor="middle">
+      <g>
+        <rect x="630" y="66" width="290" height="48" rx="9" fill="#ecfdf3" stroke="#15803d"/>
+        <text x="775" y="86" font-weight="700">B100 · bca</text>
+        <text x="775" y="104">Rp 150,000</text>
+      </g>
+      <g>
+        <rect x="630" y="146" width="290" height="48" rx="9" fill="#fff7ed" stroke="#b45309"/>
+        <text x="775" y="166" font-weight="700">N200 · bni</text>
+        <text x="775" y="184">Rp 1,997,500</text>
+      </g>
+      <g>
+        <rect x="630" y="306" width="290" height="48" rx="9" fill="#fef2f2" stroke="#b91c1c"/>
+        <text x="775" y="326" font-weight="700">B102 · bca</text>
+        <text x="775" y="344">Rp 999,000</text>
+      </g>
+    </g>
+
+    <!-- outcome legend -->
+    <g font-size="13" transform="translate(40,398)">
+      <rect x="0" y="0" width="18" height="14" rx="3" fill="#ecfdf3" stroke="#15803d"/>
+      <text x="26" y="12">Matched — exact, settled automatically</text>
+      <rect x="0" y="24" width="18" height="14" rx="3" fill="#fff7ed" stroke="#b45309"/>
+      <text x="26" y="36">Recommended — closest amount, review the difference (needs <tspan font-style="italic">-greedy</tspan>)</text>
+      <rect x="0" y="48" width="18" height="14" rx="3" fill="#fef2f2" stroke="#b91c1c"/>
+      <text x="26" y="60">Unmatched — on one side only, a real exception to investigate</text>
+    </g>
+  </svg>
+  </div>
+  <p class="note">Sample drawn from <code>testdata/</code>. Connector colours map to the three
+  outcome buckets the tool reports.</p>
+
+  <h2>Why the redesign matters</h2>
+  <div class="card">
+  <svg viewBox="0 0 960 200" role="img" aria-label="Performance before and after">
+    <text x="20" y="34" font-size="14" fill="#475569">Time to reconcile 3,000,000 rows (1M/day × 3 days)</text>
+    <!-- before bar (capped, broken) -->
+    <text x="20" y="78" font-size="14" font-weight="700">Before</text>
+    <rect x="120" y="60" width="700" height="30" rx="6" fill="#fdecdc" stroke="#b91c1c"/>
+    <text x="470" y="80" font-size="13" fill="#b91c1c" text-anchor="middle" font-weight="700">O(S×B) — effectively never finishes ✗</text>
+    <path d="M820,55 l8,40 M832,55 l8,40" stroke="#b91c1c" stroke-width="2"/>
+    <!-- after bar (tiny) -->
+    <text x="20" y="138" font-size="14" font-weight="700">After</text>
+    <rect x="120" y="120" width="70" height="30" rx="6" fill="#dcfce7" stroke="#15803d"/>
+    <text x="205" y="140" font-size="13" fill="#15803d" font-weight="700">~9 seconds ✓</text>
+    <text x="120" y="184" font-size="12.5" fill="#475569">O(S·log B): doubling the data ≈ doubles the time, not quadruples it.</text>
+  </svg>
+  </div>
+  <p class="note">Technical: the closest-match step changed from scanning every bank row per
+  transaction to a binary search over the sorted per-day index —
+  <code>reconcile.go:108–169</code>, <code>CHANGELOG.md</code>.</p>
+
+</div>
+</body>
+</html>
