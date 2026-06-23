@@ -8,6 +8,11 @@ All notable changes to this project are documented here. The format is based on
 ### Added
 - `-greedy` flag to enable Phase 2 nearest-amount matching (off by default;
   exact-only otherwise).
+- `-maxDiff` flag: a strict cap on the amount difference for a greedy match.
+  Default `0` means zero tolerance (greedy suggests nothing until set); a match
+  is recorded only when the difference is `<= maxDiff`, otherwise the
+  transaction stays unmatched and the bank row is left free. Prevents large
+  transactions from being force-matched to far-off bank rows.
 - `BankDay` type: a per-day index of bank rows sorted by amount, shared by both
   matching phases.
 - `testdata/gen` generator for large synthetic datasets, plus LFS-tracked

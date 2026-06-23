@@ -16,20 +16,27 @@ Requires Go 1.25+ (see `go.mod`). No external dependencies — standard library 
 
 ```bash
 reco -system system.csv -bank bca.csv,bni.csv -start 2024-01-01 -end 2024-01-31
-reco -greedy -system system.csv -bank bca.csv,bni.csv -start 2024-01-01 -end 2024-01-31
+reco -greedy -maxDiff 10000 -system system.csv -bank bca.csv,bni.csv -start 2024-01-01 -end 2024-01-31
 ```
 
-| Flag      | Required | Description                                              |
-|-----------|----------|---------------------------------------------------------|
-| `-system` | yes      | Path to the internal system transactions CSV.           |
-| `-bank`   | yes      | Comma-separated list of bank statement CSV paths.       |
-| `-start`  | yes      | Start date, inclusive (`YYYY-MM-DD`).                   |
-| `-end`    | yes      | End date, inclusive (`YYYY-MM-DD`).                     |
-| `-greedy` | no       | Enable Phase 2 nearest-amount matching (off by default).|
+| Flag       | Required | Description                                                     |
+|------------|----------|-----------------------------------------------------------------|
+| `-system`  | yes      | Path to the internal system transactions CSV.                   |
+| `-bank`    | yes      | Comma-separated list of bank statement CSV paths.               |
+| `-start`   | yes      | Start date, inclusive (`YYYY-MM-DD`).                           |
+| `-end`     | yes      | End date, inclusive (`YYYY-MM-DD`).                             |
+| `-greedy`  | no       | Enable Phase 2 nearest-amount matching (off by default).        |
+| `-maxDiff` | no       | Max allowed amount difference for a greedy match (default `0`). |
 
 The tool prints a summary to stdout and writes a `reconciliation_<unix>.csv`
 file in the working directory. Without `-greedy` it runs exact-match only; any
 non-exact transaction is reported as unmatched.
+
+**`-maxDiff` is a strict threshold:** a greedy match is only recorded when the
+amount difference is `<= maxDiff`. The default `0` means **zero tolerance** — so
+`-greedy` on its own suggests nothing, and you must pass `-maxDiff N` (e.g.
+`-maxDiff 10000`) to allow discrepancies up to `N`. This prevents a large
+transaction from being force-matched to a far-off bank row.
 
 ## Input formats
 
@@ -73,8 +80,10 @@ amount — so lookups are `O(log n)`, not a full scan.
    → **Matched** pairs.
 2. **Phase 2 — discrepancy match** *(only with `-greedy`)*. Remaining system
    transactions are paired with the nearest-amount unused bank row on the *same
-   day*, found by binary search over the sorted rows. These become
-   **Recommended** pairs (likely matches needing an adjustment), each carrying
+   day*, found by binary search over the sorted rows. A pair is only recorded
+   when the amount difference is within `-maxDiff`; otherwise the transaction
+   stays unmatched and the bank row is left free for a closer one. Kept pairs
+   become **Recommended** (likely matches needing an adjustment), each carrying
    the absolute amount difference.
 3. **Leftovers.** Anything still unpaired is reported as unmatched — system
    transactions missing from the banks, and bank rows missing from the system
