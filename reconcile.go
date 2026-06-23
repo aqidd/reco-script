@@ -1,11 +1,12 @@
 package main
 
 import (
+	"cmp"
 	"fmt"
 	"io"
 	"math"
 	"sort"
-	"strconv"
+	"slices"
 	"time"
 	"os"
 	"encoding/csv"
@@ -33,17 +34,8 @@ func inRange(t, start, end time.Time) bool {
 	return !d.Before(dayOnly(start)) && !d.After(dayOnly(end))
 }
 
-// cents converts a money float to integer cents so equal amounts hash the same
-// in a map key (float keys are fragile: 10.10 may not equal 10.10 exactly).
-func cents(f float64) int64 { return int64(math.Round(f * 100)) }
-
-// exactKey identifies an exact match: same day AND same signed amount.
-func exactKey(day string, signed float64) string {
-	return day + "|" + strconv.FormatInt(cents(signed), 10)
-}
-
 // Reconcile compares system transactions against bank rows within [start, end].
-func Reconcile(sys []Transaction, bank []BankRow, start, end time.Time) Summary {
+func Reconcile(sys []Transaction, bank []BankRow, start, end time.Time, greedy bool) Summary {
 	// Filter both sides to the reconciliation window.
 	var filteredSys []Transaction
 	for _, s := range sys {
@@ -63,83 +55,129 @@ func Reconcile(sys []Transaction, bank []BankRow, start, end time.Time) Summary 
 		UnmatchedBank:  map[string][]BankRow{},
 	}
 
-	// Phase 1 — exact match on (day, signed amount).
-	bankByKey := map[string][]int{}
-	for j, b := range filteredBank {
-		k := exactKey(b.DateStr(), b.Amount)
-		bankByKey[k] = append(bankByKey[k], j)
+	// Build a per-day index of bank rows, each day's rows sorted by amount.
+	// Both phases run off this single structure: Phase 1 binary-searches it
+	// for exact matches, Phase 2 reuses it (and the same used array) to find
+	// the nearest unused row. Unmatched bank = every row still !used at the end.
+	bankByDay := map[string]*BankDay{} // keyed by DateStr()
+	// Build the bankByDay index of bank rows by day, and sort each day's rows by amount.
+	for _, bankRow := range filteredBank {
+		day := bankRow.DateStr()
+		if _, ok := bankByDay[day]; !ok {
+			bankByDay[day] = &BankDay{}
+		}
+		bankByDay[day].rows = append(bankByDay[day].rows, bankRow) // append to the day's rows
 	}
-	usedBank := make([]bool, len(filteredBank))
-	var sysLeft []Transaction
-	for _, s := range filteredSys {
-		k := exactKey(s.Date(), s.Signed())
-		matched := false
-		for _, j := range bankByKey[k] {
-			if !usedBank[j] {
-				usedBank[j] = true
-				matched = true
-				sum.MatchedPairs = append(sum.MatchedPairs, Pair{Sys: s, Bank: filteredBank[j], Diff: 0})
-				break
+
+	for day := range bankByDay {
+		bankByDay[day].used = make([]bool, len(bankByDay[day].rows)) // initialize used slice
+		slices.SortFunc(bankByDay[day].rows, func(a, b BankRow) int { return cmp.Compare(a.Amount, b.Amount) }) // sort the day's rows by amount
+	}
+
+	var sysLeft []Transaction // system rows left after Phase 1
+	for _, systemRow := range filteredSys {
+		day := systemRow.Date()
+		bankDay, ok := bankByDay[day]
+		if !ok {
+			sysLeft = append(sysLeft, systemRow)
+			continue
+		}
+		// Binary search for the signed amount in this day's bank rows.
+		i, found := slices.BinarySearchFunc(bankDay.rows, systemRow.Signed(), func(b BankRow, amt float64) int {
+			return cmp.Compare(b.Amount, amt)
+		})
+		
+		var unusedRowFound bool;
+		if found {
+			// Find unused rows.
+			for j := i; j < len(bankDay.rows) && bankDay.rows[j].Amount == systemRow.Signed(); j++ {
+				if !bankDay.used[j] {
+					bankDay.used[j] = true
+					sum.MatchedPairs = append(sum.MatchedPairs, Pair{Sys: systemRow, Bank: bankDay.rows[j], Diff: 0})
+					unusedRowFound = true
+					break
+				}
 			}
 		}
-		if !matched {
-			sysLeft = append(sysLeft, s)
-		}
-	}
-	var bankLeft []BankRow
-	for j, b := range filteredBank {
-		if !usedBank[j] {
-			bankLeft = append(bankLeft, b)
+
+		if !found || !unusedRowFound {
+			sysLeft = append(sysLeft, systemRow)
 		}
 	}
 
 	// Phase 2 — greedy nearest-amount within the same day -> discrepancies.
-	// Don't save in matched pairs. save to recomended pairs. These are the ones that are likely to be adjusted.
-	pairs, sysUnmatched, bankUnmatched := greedyMatch(sysLeft, bankLeft)
-	for _, p := range pairs {
-		sum.RecommendedPairs = append(sum.RecommendedPairs, p)
-		sum.TotalDiscrepancy += p.Diff
-	}
-
-	// Leftovers are truly unmatched.
-	sum.UnmatchedSystem = sysUnmatched
-	for _, b := range bankUnmatched {
-		sum.UnmatchedBank[b.Bank] = append(sum.UnmatchedBank[b.Bank], b)
-	}
-	return sum
-}
-
-// greedyMatch pairs each leftover system transaction with the bank row on the
-// SAME DAY whose signed amount is closest. One-to-one: a bank row is taken at
-// most once. Each returned Pair is treated as a discrepancy.
-func greedyMatch(sys []Transaction, bank []BankRow) (pairs []Pair, sysLeft []Transaction, bankLeft []BankRow) {
-	used := make([]bool, len(bank))
-	for _, system := range sys {
-		best := -1
-
-		for j := range bank {
-			if used[j] || bank[j].DateStr() != system.Date() {
+	if greedy {
+		for _, sysRow := range sysLeft {
+			day := sysRow.Date()
+			bankDay, ok := bankByDay[day]
+			if !ok {
+				sum.UnmatchedSystem = append(sum.UnmatchedSystem, sysRow)
 				continue
 			}
-			if best == -1 || math.Abs(bank[j].Amount-system.Signed()) < math.Abs(bank[best].Amount-system.Signed()) {
-				best = j
+
+			// Find the nearest unused bank row by amount.
+			part, _ := slices.BinarySearchFunc(bankDay.rows, sysRow.Signed(), func(b BankRow, amt float64) int {
+				return cmp.Compare(b.Amount, amt)
+			})
+
+			//find left part unused
+			left := part - 1
+			for left >= 0 {
+				if !bankDay.used[left] {
+					break
+				}
+				left--
+			}
+
+			//find right part unused
+			right := part
+			for right < len(bankDay.rows) {
+				if !bankDay.used[right] {
+					break
+				}
+				right++
+			}
+
+			// compare left and right to see the closest value
+			var closestIndex int
+			if left >= 0 && right < len(bankDay.rows) {
+				if math.Abs(bankDay.rows[left].Amount-sysRow.Signed()) <= math.Abs(bankDay.rows[right].Amount-sysRow.Signed()) {
+					closestIndex = left
+				} else {
+					closestIndex = right
+				}
+			} else if left >= 0 {
+				closestIndex = left
+			} else if right < len(bankDay.rows) {
+				closestIndex = right
+			} else {
+				sum.UnmatchedSystem = append(sum.UnmatchedSystem, sysRow)
+				continue // no unused bank rows available
+			}
+
+			sum.RecommendedPairs = append(sum.RecommendedPairs, Pair{
+				Sys:  sysRow,
+				Bank: bankDay.rows[closestIndex],
+				Diff: math.Abs(bankDay.rows[closestIndex].Amount - sysRow.Signed()),
+			})
+			sum.TotalDiscrepancy += math.Abs(bankDay.rows[closestIndex].Amount - sysRow.Signed())
+			bankDay.used[closestIndex] = true
+		}
+	} else {
+		// If not greedy, all remaining system rows are unmatched.
+		sum.UnmatchedSystem = append(sum.UnmatchedSystem, sysLeft...)
+	}
+
+	// Collect unmatched bank rows.
+	for _, bankDay := range bankByDay {
+		for j, b := range bankDay.rows {
+			if !bankDay.used[j] {
+				sum.UnmatchedBank[b.Bank] = append(sum.UnmatchedBank[b.Bank], b)
 			}
 		}
+	}
 
-		if best == -1 {
-			sysLeft = append(sysLeft, system)
-			continue
-		}
-		used[best] = true
-		bestBankAmount := bank[best]
-		pairs = append(pairs, Pair{Sys: system, Bank: bestBankAmount, Diff: math.Abs(system.Signed() - bestBankAmount.Amount)})
-	}
-	for j, b := range bank {
-		if !used[j] {
-			bankLeft = append(bankLeft, b)
-		}
-	}
-	return
+	return sum
 }
 
 // Print writes a human-readable reconciliation summary to w.
