@@ -13,6 +13,7 @@ func main() {
 	bankList := flag.String("bank", "", "comma-separated bank statement CSV paths")
 	startStr := flag.String("start", "", "start date (YYYY-MM-DD)")
 	endStr := flag.String("end", "", "end date (YYYY-MM-DD)")
+	greedy := flag.Bool("greedy", false, "greedy matching (default false)")
 	flag.Parse()
 
 	if *sysPath == "" || *bankList == "" || *startStr == "" || *endStr == "" {
@@ -49,7 +50,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	sum := Reconcile(sys, bank, start, end)
+	sum := Reconcile(sys, bank, start, end, *greedy)
 	sum.Print(os.Stdout)
 	sum.WriteToCSV()
 }

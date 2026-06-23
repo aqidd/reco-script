@@ -40,6 +40,9 @@ type BankRow struct {
 	Date   time.Time
 }
 
+// BankDay holds all bank rows for a given day, sorted by amount
+type BankDay struct { rows []BankRow; used []bool } 
+
 // DateStr returns the calendar day as YYYY-MM-DD.
 func (b BankRow) DateStr() string { return b.Date.Format("2006-01-02") }
 
